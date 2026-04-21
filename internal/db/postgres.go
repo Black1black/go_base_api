@@ -1,10 +1,11 @@
 package db
 
 import (
-	config "ex_proj_go/configs"
-	"ex_proj_go/internal/models"
 	"fmt"
 	"log"
+
+	config "github.com/Black1black/go_base_api/configs"
+	"github.com/Black1black/go_base_api/internal/models"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"

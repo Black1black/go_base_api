@@ -1,12 +1,13 @@
 package main
 
 import (
-	config "ex_proj_go/configs"
-	"ex_proj_go/internal/db"
-	"ex_proj_go/internal/handler"
+	config "github.com/Black1black/go_base_api/configs"
+	"github.com/Black1black/go_base_api/internal/db"
+	"github.com/Black1black/go_base_api/internal/handler"
+	walletUC "github.com/Black1black/go_base_api/internal/usecase/wallet"
 
-	"ex_proj_go/internal/repository/users"
-	"go_base_api/pkg/logger"
+	"github.com/Black1black/go_base_api/internal/repository/wallet"
+	"github.com/Black1black/go_base_api/pkg/logger"
 
 	"log"
 )
@@ -41,10 +42,24 @@ func main() {
 	}
 	defer db.CloseConnection(postgresDB)
 
-	usersRepo := users.NewRepository(postgresDB)
+	walletRepo := wallet.NewRepository(postgresDB)
 
-	usersUseCase := usersUC.NewUsecase(usersRepo)
+	walletUseCase := walletUC.NewUsecase(walletRepo)
 
-	handler := handler.NewHandler(usersUseCase)
+	handler := handler.NewHandler(walletUseCase)
+
+	// Initialize router
+	router := handler.InitRoutes()
+
+	// Start server
+	port := cfg.App.Port
+	if port == "" {
+		port = "8080"
+	}
+
+	appLogger.Info("Server starting", "port", port)
+	if err := router.Run(":" + port); err != nil {
+		log.Fatalf("Ошибка запуска сервера: %v", err)
+	}
 
 }
