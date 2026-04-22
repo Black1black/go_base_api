@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/Black1black/go_base_api/internal/models"
 	"github.com/google/uuid"
@@ -20,29 +22,77 @@ func NewRepository(db *gorm.DB) *Repository {
 }
 
 func (r *Repository) UpdateBalance(ctx context.Context, walletID uuid.UUID, amount int64, operationType models.OperationType) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
+	const maxRetries = 5
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		err := r.updateBalanceTx(ctx, walletID, amount, operationType)
+
+		if err == nil {
+			return nil
+		}
+
+		if isRetryableError(err) && attempt < maxRetries-1 {
+			backoff := time.Millisecond * 10 * time.Duration(1<<attempt)
+			time.Sleep(backoff)
+			continue
+		}
+
+		return err
+	}
+
+	return fmt.Errorf("max retries exceeded for wallet %s", walletID)
+}
+
+func (r *Repository) updateBalanceTx(ctx context.Context, walletID uuid.UUID, amount int64, operationType models.OperationType) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var wallet models.Wallet
 
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("id = ?", walletID).
-			First(&wallet).Error; err != nil {
+			First(&wallet).Error
+
+		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return fmt.Errorf("wallet not found")
+				if operationType == models.Deposit {
+					wallet = models.Wallet{
+						ID:      walletID,
+						Balance: 0,
+					}
+					if createErr := tx.Create(&wallet).Error; createErr != nil {
+						if !strings.Contains(createErr.Error(), "duplicate key") {
+							return fmt.Errorf("failed to create wallet: %w", createErr)
+						}
+						if findErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+							Where("id = ?", walletID).
+							First(&wallet).Error; findErr != nil {
+							return fmt.Errorf("failed to find wallet after duplicate: %w", findErr)
+						}
+					}
+				} else {
+					return fmt.Errorf("wallet not found")
+				}
+			} else {
+				return fmt.Errorf("failed to lock wallet: %w", err)
 			}
-			return err
 		}
 
 		if operationType == models.Withdraw {
 			if wallet.Balance < amount {
 				return fmt.Errorf("insufficient funds: balance=%d, withdraw=%d", wallet.Balance, amount)
 			}
-			wallet.Balance -= amount
-		} else {
-			wallet.Balance += amount
 		}
 
-		if err := tx.Save(&wallet).Error; err != nil {
-			return err
+		var newBalance int64
+		if operationType == models.Withdraw {
+			newBalance = wallet.Balance - amount
+		} else {
+			newBalance = wallet.Balance + amount
+		}
+
+		if err := tx.Model(&models.Wallet{}).
+			Where("id = ?", walletID).
+			Update("balance", newBalance).Error; err != nil {
+			return fmt.Errorf("failed to update balance: %w", err)
 		}
 
 		transaction := &models.Transaction{
@@ -52,7 +102,7 @@ func (r *Repository) UpdateBalance(ctx context.Context, walletID uuid.UUID, amou
 		}
 
 		if err := tx.Create(transaction).Error; err != nil {
-			return err
+			return fmt.Errorf("failed to create transaction record: %w", err)
 		}
 
 		return nil
@@ -68,20 +118,33 @@ func (r *Repository) GetBalance(ctx context.Context, walletID uuid.UUID) (int64,
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return 0, fmt.Errorf("wallet not found")
 		}
-		return 0, err
+		return 0, fmt.Errorf("failed to get balance: %w", err)
 	}
 
 	return wallet.Balance, nil
 }
 
-func (r *Repository) CreateWallet(ctx context.Context) (*models.Wallet, error) {
-	wallet := &models.Wallet{
-		Balance: 0,
+func isRetryableError(err error) bool {
+	if err == nil {
+		return false
 	}
 
-	if err := r.db.WithContext(ctx).Create(wallet).Error; err != nil {
-		return nil, err
+	errMsg := err.Error()
+
+	deadlockPatterns := []string{
+		"deadlock",
+		"Deadlock",
+		"40P01",
+		"balance was modified concurrently",
+		"could not serialize",
+		"55P03",
 	}
 
-	return wallet, nil
+	for _, pattern := range deadlockPatterns {
+		if strings.Contains(errMsg, pattern) {
+			return true
+		}
+	}
+
+	return false
 }

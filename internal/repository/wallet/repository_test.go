@@ -131,38 +131,19 @@ func cleanDB(db *gorm.DB) {
 	db.Exec("TRUNCATE TABLE wallets RESTART IDENTITY CASCADE")
 }
 
-func TestCreateWallet(t *testing.T) {
-	db := setupTestDB(t)
-	repo := NewRepository(db)
-
-	ctx := context.Background()
-
-	wallet, err := repo.CreateWallet(ctx)
-	if err != nil {
-		t.Fatalf("Failed to create wallet: %v", err)
-	}
-
-	if wallet.ID == uuid.Nil {
-		t.Error("Wallet ID should not be nil")
-	}
-
-	if wallet.Balance != 0 {
-		t.Errorf("Expected balance 0, got %d", wallet.Balance)
-	}
-}
-
 func TestGetBalance(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewRepository(db)
 
 	ctx := context.Background()
 
-	wallet, err := repo.CreateWallet(ctx)
+	walletID := uuid.New()
+	err := repo.UpdateBalance(ctx, walletID, 0, models.Deposit)
 	if err != nil {
-		t.Fatalf("Failed to create wallet: %v", err)
+		t.Fatalf("Failed to create wallet via deposit: %v", err)
 	}
 
-	balance, err := repo.GetBalance(ctx, wallet.ID)
+	balance, err := repo.GetBalance(ctx, walletID)
 	if err != nil {
 		t.Fatalf("Failed to get balance: %v", err)
 	}
@@ -189,23 +170,19 @@ func TestGetBalance_WalletNotFound(t *testing.T) {
 	}
 }
 
-func TestUpdateBalance_Deposit(t *testing.T) {
+func TestUpdateBalance_Deposit_NewWallet(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewRepository(db)
 
 	ctx := context.Background()
+	walletID := uuid.New()
 
-	wallet, err := repo.CreateWallet(ctx)
+	err := repo.UpdateBalance(ctx, walletID, 100, models.Deposit)
 	if err != nil {
-		t.Fatalf("Failed to create wallet: %v", err)
+		t.Fatalf("Failed to deposit to new wallet: %v", err)
 	}
 
-	err = repo.UpdateBalance(ctx, wallet.ID, 100, models.Deposit)
-	if err != nil {
-		t.Fatalf("Failed to deposit: %v", err)
-	}
-
-	balance, err := repo.GetBalance(ctx, wallet.ID)
+	balance, err := repo.GetBalance(ctx, walletID)
 	if err != nil {
 		t.Fatalf("Failed to get balance: %v", err)
 	}
@@ -215,7 +192,7 @@ func TestUpdateBalance_Deposit(t *testing.T) {
 	}
 
 	var transaction models.Transaction
-	db.Where("wallet_id = ?", wallet.ID).First(&transaction)
+	db.Where("wallet_id = ?", walletID).First(&transaction)
 	if transaction.Amount != 100 {
 		t.Errorf("Expected transaction amount 100, got %d", transaction.Amount)
 	}
@@ -224,28 +201,57 @@ func TestUpdateBalance_Deposit(t *testing.T) {
 	}
 }
 
+func TestUpdateBalance_Deposit_ExistingWallet(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewRepository(db)
+
+	ctx := context.Background()
+	walletID := uuid.New()
+
+	err := repo.UpdateBalance(ctx, walletID, 50, models.Deposit)
+	if err != nil {
+		t.Fatalf("Failed to initial deposit: %v", err)
+	}
+
+	err = repo.UpdateBalance(ctx, walletID, 100, models.Deposit)
+	if err != nil {
+		t.Fatalf("Failed to deposit again: %v", err)
+	}
+
+	balance, err := repo.GetBalance(ctx, walletID)
+	if err != nil {
+		t.Fatalf("Failed to get balance: %v", err)
+	}
+
+	if balance != 150 {
+		t.Errorf("Expected balance 150, got %d", balance)
+	}
+
+	var transactions []models.Transaction
+	db.Where("wallet_id = ?", walletID).Order("created_at").Find(&transactions)
+	if len(transactions) != 2 {
+		t.Errorf("Expected 2 transactions, got %d", len(transactions))
+	}
+}
+
 func TestUpdateBalance_Withdraw(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewRepository(db)
 
 	ctx := context.Background()
+	walletID := uuid.New()
 
-	wallet, err := repo.CreateWallet(ctx)
-	if err != nil {
-		t.Fatalf("Failed to create wallet: %v", err)
-	}
-
-	err = repo.UpdateBalance(ctx, wallet.ID, 200, models.Deposit)
+	err := repo.UpdateBalance(ctx, walletID, 200, models.Deposit)
 	if err != nil {
 		t.Fatalf("Failed to deposit: %v", err)
 	}
 
-	err = repo.UpdateBalance(ctx, wallet.ID, 50, models.Withdraw)
+	err = repo.UpdateBalance(ctx, walletID, 50, models.Withdraw)
 	if err != nil {
 		t.Fatalf("Failed to withdraw: %v", err)
 	}
 
-	balance, err := repo.GetBalance(ctx, wallet.ID)
+	balance, err := repo.GetBalance(ctx, walletID)
 	if err != nil {
 		t.Fatalf("Failed to get balance: %v", err)
 	}
@@ -255,9 +261,27 @@ func TestUpdateBalance_Withdraw(t *testing.T) {
 	}
 
 	var transaction models.Transaction
-	db.Where("wallet_id = ? AND type = ?", wallet.ID, models.Withdraw).First(&transaction)
+	db.Where("wallet_id = ? AND type = ?", walletID, models.Withdraw).First(&transaction)
 	if transaction.Amount != 50 {
 		t.Errorf("Expected transaction amount 50, got %d", transaction.Amount)
+	}
+}
+
+func TestUpdateBalance_WithdrawFromNonExistentWallet(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewRepository(db)
+
+	ctx := context.Background()
+	fakeID := uuid.New()
+
+	err := repo.UpdateBalance(ctx, fakeID, 100, models.Withdraw)
+	if err == nil {
+		t.Error("Expected error for non-existent wallet withdrawal, got nil")
+	}
+
+	expectedErr := "wallet not found"
+	if err.Error() != expectedErr {
+		t.Errorf("Expected '%s', got '%v'", expectedErr, err)
 	}
 }
 
@@ -266,13 +290,14 @@ func TestUpdateBalance_InsufficientFunds(t *testing.T) {
 	repo := NewRepository(db)
 
 	ctx := context.Background()
+	walletID := uuid.New()
 
-	wallet, err := repo.CreateWallet(ctx)
+	err := repo.UpdateBalance(ctx, walletID, 0, models.Deposit)
 	if err != nil {
 		t.Fatalf("Failed to create wallet: %v", err)
 	}
 
-	err = repo.UpdateBalance(ctx, wallet.ID, 100, models.Withdraw)
+	err = repo.UpdateBalance(ctx, walletID, 100, models.Withdraw)
 	if err == nil {
 		t.Error("Expected insufficient funds error, got nil")
 	}
@@ -281,26 +306,9 @@ func TestUpdateBalance_InsufficientFunds(t *testing.T) {
 		t.Errorf("Expected insufficient funds error, got '%v'", err)
 	}
 
-	balance, _ := repo.GetBalance(ctx, wallet.ID)
+	balance, _ := repo.GetBalance(ctx, walletID)
 	if balance != 0 {
 		t.Errorf("Balance should remain 0, got %d", balance)
-	}
-}
-
-func TestUpdateBalance_WalletNotFound(t *testing.T) {
-	db := setupTestDB(t)
-	repo := NewRepository(db)
-
-	ctx := context.Background()
-	fakeID := uuid.New()
-
-	err := repo.UpdateBalance(ctx, fakeID, 100, models.Deposit)
-	if err == nil {
-		t.Error("Expected error for non-existent wallet, got nil")
-	}
-
-	if err.Error() != "wallet not found" {
-		t.Errorf("Expected 'wallet not found', got '%v'", err)
 	}
 }
 
@@ -309,20 +317,21 @@ func TestUpdateBalance_ZeroAmount(t *testing.T) {
 	repo := NewRepository(db)
 
 	ctx := context.Background()
+	walletID := uuid.New()
 
-	wallet, err := repo.CreateWallet(ctx)
+	err := repo.UpdateBalance(ctx, walletID, 100, models.Deposit)
 	if err != nil {
 		t.Fatalf("Failed to create wallet: %v", err)
 	}
 
-	err = repo.UpdateBalance(ctx, wallet.ID, 0, models.Deposit)
+	err = repo.UpdateBalance(ctx, walletID, 0, models.Deposit)
 	if err != nil {
 		t.Fatalf("Failed to deposit zero: %v", err)
 	}
 
-	balance, _ := repo.GetBalance(ctx, wallet.ID)
-	if balance != 0 {
-		t.Errorf("Balance should remain 0, got %d", balance)
+	balance, _ := repo.GetBalance(ctx, walletID)
+	if balance != 100 {
+		t.Errorf("Balance should remain 100, got %d", balance)
 	}
 }
 
@@ -331,11 +340,7 @@ func TestMultipleOperations(t *testing.T) {
 	repo := NewRepository(db)
 
 	ctx := context.Background()
-
-	wallet, err := repo.CreateWallet(ctx)
-	if err != nil {
-		t.Fatalf("Failed to create wallet: %v", err)
-	}
+	walletID := uuid.New()
 
 	operations := []struct {
 		opType models.OperationType
@@ -350,7 +355,7 @@ func TestMultipleOperations(t *testing.T) {
 
 	expectedBalance := int64(0)
 	for _, op := range operations {
-		err = repo.UpdateBalance(ctx, wallet.ID, op.amount, op.opType)
+		err := repo.UpdateBalance(ctx, walletID, op.amount, op.opType)
 		if err != nil {
 			t.Fatalf("Operation failed: %+v, error: %v", op, err)
 		}
@@ -361,13 +366,13 @@ func TestMultipleOperations(t *testing.T) {
 		}
 	}
 
-	balance, _ := repo.GetBalance(ctx, wallet.ID)
+	balance, _ := repo.GetBalance(ctx, walletID)
 	if balance != expectedBalance {
 		t.Errorf("Expected balance %d, got %d", expectedBalance, balance)
 	}
 
 	var count int64
-	db.Model(&models.Transaction{}).Where("wallet_id = ?", wallet.ID).Count(&count)
+	db.Model(&models.Transaction{}).Where("wallet_id = ?", walletID).Count(&count)
 	if count != int64(len(operations)) {
 		t.Errorf("Expected %d transactions, got %d", len(operations), count)
 	}
@@ -378,11 +383,7 @@ func TestConcurrentDeposits(t *testing.T) {
 	repo := NewRepository(db)
 
 	ctx := context.Background()
-
-	wallet, err := repo.CreateWallet(ctx)
-	if err != nil {
-		t.Fatalf("Failed to create wallet: %v", err)
-	}
+	walletID := uuid.New()
 
 	concurrency := 100
 	amountPerOp := int64(10)
@@ -390,7 +391,7 @@ func TestConcurrentDeposits(t *testing.T) {
 
 	for i := 0; i < concurrency; i++ {
 		go func() {
-			err := repo.UpdateBalance(ctx, wallet.ID, amountPerOp, models.Deposit)
+			err := repo.UpdateBalance(ctx, walletID, amountPerOp, models.Deposit)
 			if err != nil {
 				t.Errorf("Concurrent deposit failed: %v", err)
 			}
@@ -402,7 +403,7 @@ func TestConcurrentDeposits(t *testing.T) {
 		<-done
 	}
 
-	balance, _ := repo.GetBalance(ctx, wallet.ID)
+	balance, _ := repo.GetBalance(ctx, walletID)
 	expectedBalance := amountPerOp * int64(concurrency)
 
 	if balance != expectedBalance {
@@ -415,13 +416,9 @@ func TestConcurrentMixedOperations(t *testing.T) {
 	repo := NewRepository(db)
 
 	ctx := context.Background()
+	walletID := uuid.New()
 
-	wallet, err := repo.CreateWallet(ctx)
-	if err != nil {
-		t.Fatalf("Failed to create wallet: %v", err)
-	}
-
-	err = repo.UpdateBalance(ctx, wallet.ID, 10000, models.Deposit)
+	err := repo.UpdateBalance(ctx, walletID, 10000, models.Deposit)
 	if err != nil {
 		t.Fatalf("Failed to initial deposit: %v", err)
 	}
@@ -431,11 +428,11 @@ func TestConcurrentMixedOperations(t *testing.T) {
 
 	for i := 0; i < concurrency; i++ {
 		go func() {
-			repo.UpdateBalance(ctx, wallet.ID, 10, models.Deposit)
+			repo.UpdateBalance(ctx, walletID, 10, models.Deposit)
 			done <- true
 		}()
 		go func() {
-			repo.UpdateBalance(ctx, wallet.ID, 5, models.Withdraw)
+			repo.UpdateBalance(ctx, walletID, 5, models.Withdraw)
 			done <- true
 		}()
 	}
@@ -444,7 +441,7 @@ func TestConcurrentMixedOperations(t *testing.T) {
 		<-done
 	}
 
-	balance, _ := repo.GetBalance(ctx, wallet.ID)
+	balance, _ := repo.GetBalance(ctx, walletID)
 	expectedBalance := int64(10000) + (int64(concurrency)*10 - int64(concurrency)*5)
 
 	if balance != expectedBalance {
@@ -457,26 +454,27 @@ func TestTransactionRollbackOnError(t *testing.T) {
 	repo := NewRepository(db)
 
 	ctx := context.Background()
+	walletID := uuid.New()
 
-	wallet, err := repo.CreateWallet(ctx)
+	err := repo.UpdateBalance(ctx, walletID, 100, models.Deposit)
 	if err != nil {
 		t.Fatalf("Failed to create wallet: %v", err)
 	}
 
-	err = repo.UpdateBalance(ctx, wallet.ID, 100, models.Withdraw)
+	err = repo.UpdateBalance(ctx, walletID, 200, models.Withdraw)
 	if err == nil {
 		t.Error("Expected error, got nil")
 	}
 
 	var count int64
-	db.Model(&models.Transaction{}).Where("wallet_id = ?", wallet.ID).Count(&count)
-	if count != 0 {
-		t.Errorf("Expected 0 transactions on error, got %d", count)
+	db.Model(&models.Transaction{}).Where("wallet_id = ?", walletID).Count(&count)
+	if count != 1 {
+		t.Errorf("Expected 1 transaction (only deposit), got %d", count)
 	}
 
-	balance, _ := repo.GetBalance(ctx, wallet.ID)
-	if balance != 0 {
-		t.Errorf("Balance should remain 0, got %d", balance)
+	balance, _ := repo.GetBalance(ctx, walletID)
+	if balance != 100 {
+		t.Errorf("Balance should remain 100, got %d", balance)
 	}
 }
 
@@ -487,7 +485,8 @@ func TestContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := repo.CreateWallet(ctx)
+	walletID := uuid.New()
+	err := repo.UpdateBalance(ctx, walletID, 100, models.Deposit)
 	if err == nil {
 		t.Error("Expected error with cancelled context, got nil")
 	}

@@ -1,0 +1,102 @@
+# Binaries
+/bin/
+/*.exe
+/*.exe~
+/*.dll
+/*.so
+/*.dylib
+/bin/app
+/bin/wallet_app
+*.exe
+
+# Test binary
+*.test
+
+# Output of the go coverage tool
+*.out
+*.cov
+coverage.html
+coverage.out
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+go.work.sum
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.iml
+.DS_Store
+
+# Environment files
+.env
+.env.local
+.env.*.local
+!.env.example
+configs/.env
+
+# Logs
+*.log
+logs/
+*.log
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+*.dll
+
+# Docker
+*.pid
+docker-compose.override.yml
+.dockerignore
+
+# Temporary files
+/tmp
+/tmp/*
+tmp/
+*.tmp
+*.temp
+
+# Build artifacts
+/dist
+/build
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Application specific
+*.pid
+*.seed
+*.pid.lock
+/coverage
+/.cache
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Local development
+.envrc
+.venv
+venv/
+__pycache__/
+
+# Go specific
+*.mod
+*.sum
+go.sum
+go.mod

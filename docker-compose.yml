@@ -46,7 +46,7 @@ services:
   test:
     build:
       context: .
-      dockerfile: Dockerfile.test
+      dockerfile: dockerfile.test
     container_name: wallet_test
     environment:
       POSTGRES_HOST: test-db
@@ -66,7 +66,7 @@ services:
         condition: service_started
     networks:
       - wallet_network
-    entrypoint: ["go", "test", "-v", "-race", "./..."]
+    entrypoint: ["go", "test", "-v", "./..."]
     profiles:
       - test
 

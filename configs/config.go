@@ -24,11 +24,8 @@ type Config struct {
 }
 
 func LoadConfig() (*Config, error) {
-	if err := godotenv.Load("configs/.env"); err != nil {
-		// Пробуем загрузить из корня, если нет в configs
-		if err := godotenv.Load(); err != nil {
-			return &Config{}, fmt.Errorf("failed to load .env file: %w", err)
-		}
+	if err := godotenv.Load(); err != nil {
+		fmt.Println("No .env file found, using environment variables")
 	}
 
 	var cfg Config

@@ -88,16 +88,18 @@ func createWalletHelper(t *testing.T, cfg *TestConfig) string {
 	reqBody := map[string]interface{}{
 		"walletId":      walletID,
 		"operationType": "DEPOSIT",
-		"amount":        0,
+		"amount":        100,
 	}
 	jsonBody, _ := json.Marshal(reqBody)
 
 	resp, err := http.Post(cfg.getAPIURL("/api/v1/wallet"), "application/json", bytes.NewBuffer(jsonBody))
 	if err != nil {
-		t.Logf("Warning: Could not create wallet via API: %v", err)
+		t.Fatalf("Failed to create wallet: %v", err)
 	}
-	if resp != nil {
-		defer resp.Body.Close()
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Failed to create wallet, status: %d", resp.StatusCode)
 	}
 
 	return walletID

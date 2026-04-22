@@ -40,7 +40,6 @@ func (h *Handler) processOperation(c *gin.Context) {
 	c.JSON(200, gin.H{"status": "ok"})
 }
 
-// getBalance - получение баланса
 func (h *Handler) getBalance(c *gin.Context) {
 	walletID, err := uuid.Parse(c.Param("WALLET_UUID"))
 	if err != nil {
