@@ -7,8 +7,8 @@ import (
 
 	"github.com/Black1black/go_base_api/internal/models"
 	"github.com/google/uuid"
-	"github.com/ybru-tech/georm"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type Repository struct {
@@ -23,7 +23,7 @@ func (r *Repository) UpdateBalance(ctx context.Context, walletID uuid.UUID, amou
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		var wallet models.Wallet
 
-		if err := tx.Clauses(georm.Locking{Strength: "UPDATE"}).
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("id = ?", walletID).
 			First(&wallet).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {

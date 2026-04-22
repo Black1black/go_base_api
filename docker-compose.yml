@@ -1,0 +1,97 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: wallet_postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DBNAME:-wallet}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
+    networks:
+      - wallet_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: wallet_app
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DBNAME: ${POSTGRES_DBNAME:-wallet}
+      APP_PORT: 8080
+      APP_LOGING_LEVEL: ${APP_LOGING_LEVEL:-info}
+    networks:
+      - wallet_network
+    restart: unless-stopped
+
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    container_name: wallet_test
+    environment:
+      POSTGRES_HOST: test-db
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${TEST_DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${TEST_DB_PASSWORD:-postgres}
+      POSTGRES_DBNAME: ${TEST_DB_NAME:-wallet_test}
+      APP_PORT: 8081
+      APP_LOGING_LEVEL: debug
+      IN_DOCKER: "true"
+      TEST_API_HOST: app
+      TEST_DB_HOST: test-db
+    depends_on:
+      test-db:
+        condition: service_healthy
+      app:
+        condition: service_started
+    networks:
+      - wallet_network
+    entrypoint: ["go", "test", "-v", "-race", "./..."]
+    profiles:
+      - test
+
+  test-db:
+    image: postgres:15-alpine
+    container_name: wallet_test_db
+    environment:
+      POSTGRES_USER: ${TEST_DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${TEST_DB_PASSWORD:-postgres}
+      POSTGRES_DB: ${TEST_DB_NAME:-wallet_test}
+    ports:
+      - "5433:5432"
+    networks:
+      - wallet_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${TEST_DB_USER:-postgres}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    profiles:
+      - test
+
+networks:
+  wallet_network:
+    driver: bridge
+
+volumes:
+  postgres_data:

@@ -11,7 +11,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// InitPostgresDB создает и возвращает новое подключение к БД
 func InitPostgresDB(cfg *config.Config) (*gorm.DB, error) {
 	dsn := fmt.Sprintf(
 		"host=%s user=%s password=%s dbname=%s port=%d sslmode=disable TimeZone=UTC",
@@ -23,24 +22,12 @@ func InitPostgresDB(cfg *config.Config) (*gorm.DB, error) {
 	)
 
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
-		PrepareStmt: true, // Включаем подготовку выражений для повышения производительности
+		PrepareStmt: true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
 
-	// TODO - настроить пулл соединений
-	// // Настройка пула соединений
-	// sqlDB, err := db.DB()
-	// if err != nil {
-	// 	return nil, fmt.Errorf("failed to get underlying sql.DB: %w", err)
-	// }
-
-	// sqlDB.SetMaxOpenConns(cfg.Postgres.MaxOpenConns)       // Максимальное число открытых соединений
-	// sqlDB.SetMaxIdleConns(cfg.Postgres.MaxIdleConns)       // Максимальное число простаивающих соединений
-	// sqlDB.SetConnMaxLifetime(cfg.Postgres.ConnMaxLifetime) // Максимальное время жизни соединения
-
-	// Применение миграций
 	if err := ApplyMigrations(db); err != nil {
 		return nil, fmt.Errorf("failed to apply migrations: %w", err)
 	}
@@ -48,7 +35,6 @@ func InitPostgresDB(cfg *config.Config) (*gorm.DB, error) {
 	return db, nil
 }
 
-// CloseConnection безопасно закрывает соединение с БД
 func CloseConnection(db *gorm.DB) {
 	if db == nil {
 		return
@@ -65,11 +51,10 @@ func CloseConnection(db *gorm.DB) {
 	}
 }
 
-// ApplyMigrations применяет все необходимые миграции
 func ApplyMigrations(db *gorm.DB) error {
 	models := []interface{}{
-		&models.User{},
-		// Добавьте другие модели здесь
+		&models.Wallet{},
+		&models.Transaction{},
 	}
 
 	for _, model := range models {
