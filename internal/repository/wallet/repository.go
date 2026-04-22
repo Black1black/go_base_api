@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/Black1black/go_base_api/internal/models"
 	"github.com/google/uuid"
@@ -14,40 +13,37 @@ import (
 )
 
 type Repository struct {
-	db *gorm.DB
+	db        *gorm.DB
+	processor *OperationProcessor
 }
 
 func NewRepository(db *gorm.DB) *Repository {
-	return &Repository{db: db}
-}
-
-func (r *Repository) UpdateBalance(ctx context.Context, walletID uuid.UUID, amount int64, operationType models.OperationType) error {
-	const maxRetries = 5
-
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		err := r.updateBalanceTx(ctx, walletID, amount, operationType)
-
-		if err == nil {
-			return nil
-		}
-
-		if isRetryableError(err) && attempt < maxRetries-1 {
-			backoff := time.Millisecond * 10 * time.Duration(1<<attempt)
-			time.Sleep(backoff)
-			continue
-		}
-
-		return err
+	repo := &Repository{
+		db: db,
 	}
 
-	return fmt.Errorf("max retries exceeded for wallet %s", walletID)
+	repo.processor = NewOperationProcessor(repo)
+
+	return repo
 }
 
-func (r *Repository) updateBalanceTx(ctx context.Context, walletID uuid.UUID, amount int64, operationType models.OperationType) error {
+func (r *Repository) UpdateBalance(ctx context.Context, walletID uuid.UUID,
+	amount int64, operationType models.OperationType) error {
+
+	if amount <= 0 {
+		return fmt.Errorf("amount must be positive")
+	}
+
+	return r.processor.Process(ctx, walletID, amount, operationType)
+}
+
+func (r *Repository) updateBalanceTx(ctx context.Context, walletID uuid.UUID,
+	amount int64, operationType models.OperationType) error {
+
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var wallet models.Wallet
 
-		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "NOWAIT"}).
 			Where("id = ?", walletID).
 			First(&wallet).Error
 
@@ -62,7 +58,7 @@ func (r *Repository) updateBalanceTx(ctx context.Context, walletID uuid.UUID, am
 						if !strings.Contains(createErr.Error(), "duplicate key") {
 							return fmt.Errorf("failed to create wallet: %w", createErr)
 						}
-						if findErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+						if findErr := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "NOWAIT"}).
 							Where("id = ?", walletID).
 							First(&wallet).Error; findErr != nil {
 							return fmt.Errorf("failed to find wallet after duplicate: %w", findErr)
@@ -124,27 +120,8 @@ func (r *Repository) GetBalance(ctx context.Context, walletID uuid.UUID) (int64,
 	return wallet.Balance, nil
 }
 
-func isRetryableError(err error) bool {
-	if err == nil {
-		return false
+func (r *Repository) Shutdown() {
+	if r.processor != nil {
+		r.processor.Shutdown()
 	}
-
-	errMsg := err.Error()
-
-	deadlockPatterns := []string{
-		"deadlock",
-		"Deadlock",
-		"40P01",
-		"balance was modified concurrently",
-		"could not serialize",
-		"55P03",
-	}
-
-	for _, pattern := range deadlockPatterns {
-		if strings.Contains(errMsg, pattern) {
-			return true
-		}
-	}
-
-	return false
 }

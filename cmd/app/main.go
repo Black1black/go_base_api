@@ -1,20 +1,21 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	config "github.com/Black1black/go_base_api/configs"
 	"github.com/Black1black/go_base_api/internal/db"
 	"github.com/Black1black/go_base_api/internal/handler"
+	walletRepo "github.com/Black1black/go_base_api/internal/repository/wallet"
 	walletUC "github.com/Black1black/go_base_api/internal/usecase/wallet"
-
-	"github.com/Black1black/go_base_api/internal/repository/wallet"
 	"github.com/Black1black/go_base_api/pkg/logger"
-
-	"log"
 )
 
 // @title GoBaseApi API
@@ -25,7 +26,6 @@ import (
 // @BasePath /api/v1
 
 func main() {
-
 	// Load Config
 	cfg, err := config.LoadConfig()
 	if err != nil {
@@ -44,7 +44,8 @@ func main() {
 	}
 	defer db.CloseConnection(postgresDB)
 
-	walletRepo := wallet.NewRepository(postgresDB)
+	walletRepo := walletRepo.NewRepository(postgresDB)
+	defer walletRepo.Shutdown()
 
 	walletUseCase := walletUC.NewUsecase(walletRepo)
 
@@ -53,10 +54,17 @@ func main() {
 	// Initialize router
 	router := handler.InitRoutes()
 
-	// Start server
+	srv := &http.Server{
+		Addr:         fmt.Sprintf(":%d", cfg.App.Port),
+		Handler:      router,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
 	appLogger.Info("Server starting", "port", cfg.App.Port)
 	go func() {
-		if err := router.Run(fmt.Sprintf(":%d", cfg.App.Port)); err != nil {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Ошибка запуска сервера: %v", err)
 		}
 	}()
@@ -67,4 +75,12 @@ func main() {
 
 	appLogger.Info("Shutting down server...")
 
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		appLogger.Error("Server forced to shutdown", err)
+	}
+
+	appLogger.Info("Server stopped")
 }
